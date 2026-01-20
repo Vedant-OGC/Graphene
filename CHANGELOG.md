@@ -1,0 +1,3 @@
+# Changelog
+
+- Improved error handling
