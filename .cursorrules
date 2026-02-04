@@ -1,0 +1,1000 @@
+# Graphene — AI Code Editor Master Prompt
+### For use in Cursor, Windsurf, or any AI code editor with project-level context
+
+## SECTION 0 — Project Identity & Non-Negotiables
+
+```
+You are building "Graphene" — an AI-powered Fund Flow Tracking and Fraud Detection system
+for the PSBs Hackathon 2026 (Union Bank of India). The system maps end-to-end movement of
+funds across bank accounts, detects suspicious patterns using Graph Neural Networks and
+anomaly detection, and presents findings to fraud investigators through an interactive
+graph visualisation dashboard.
+
+PROJECT NAME: Graphene
+TAGLINE: "See through every transaction."
+HACKATHON: PSBs Hackathon Series 2026 — Union Bank of India — Problem Statement PS3
+
+ABSOLUTE RULES — never violate these:
+- Language: Python 3.11+ for all backend and ML code
+- Graph DB: Neo4j (local, bolt://localhost:7687) — no substitutions
+- ML: PyTorch + PyTorch Geometric for GNN; scikit-learn for Isolation Forest
+- API: FastAPI with uvicorn — synchronous where possible, async for DB calls
+- Frontend: Single-file React (JSX) using Cytoscape.js for graph visualisation
+- Deployment: localhost only — no cloud, no Docker required for hackathon demo
+- No placeholder code — every function must be fully implemented
+- No TODO comments — implement it or don't include it
+- Every ML model must produce a SHAP explanation alongside its prediction
+- All monetary values are in INR (Indian Rupees)
+- All timestamps use IST (Asia/Kolkata, UTC+5:30)
+```
+
+---
+
+## SECTION 1 — Full Project Structure
+
+```
+Instruct the editor to create this exact folder and file structure. Do not deviate.
+
+graphene/
+├── .env                          # Environment variables (never commit)
+├── .cursorrules                  # This prompt file
+├── requirements.txt              # All Python dependencies pinned
+├── run_demo.sh                   # One-command demo launcher
+├── README.md                     # Setup and run instructions
+│
+├── additional resources/
+│   ├── build layers.png          #layers of building
+│   ├── project structure.png     #project structure demo
+│   └── technical breakdown.txt   #technical breakdown
+├── data/
+│   ├── __init__.py
+│   ├── generate_transactions.py  # Synthetic transaction data generator
+│   ├── fraud_patterns.py         # Plants known AML fraud patterns in data
+│   ├── schema.py                 # Pydantic models for all data shapes
+│   └── seed_neo4j.py             # Loads generated data into Neo4j
+│
+├── graph/
+│   ├── __init__.py
+│   ├── neo4j_client.py           # Neo4j driver singleton + connection pool
+│   ├── graph_builder.py          # Converts transactions → Neo4j nodes/edges
+│   ├── pattern_queries.py        # Cypher queries for AML pattern detection
+│   └── graph_exporter.py         # Exports subgraphs as JSON for frontend
+│
+├── ml/
+│   ├── __init__.py
+│   ├── gnn_model.py              # Graph Neural Network (GraphSAGE)
+│   ├── anomaly_detector.py       # Isolation Forest + LOF ensemble
+│   ├── risk_scorer.py            # Combines ML scores + rule matches → 0-100
+│   ├── shap_explainer.py         # SHAP explanations for every prediction
+│   ├── feature_engineering.py    # Extracts node/edge features from Neo4j
+│   └── train.py                  # Full training pipeline (offline)
+│
+├── api/
+│   ├── __init__.py
+│   ├── main.py                   # FastAPI app entry point
+│   ├── dependencies.py           # Shared DB/ML dependencies via DI
+│   ├── routes/
+│   │   ├── __init__.py
+│   │   ├── alerts.py             # GET /alerts, GET /alerts/{id}, PATCH
+│   │   ├── graph.py              # GET /graph/{account_id}, POST /trace
+│   │   ├── reports.py            # POST /reports/generate (FIU PDF)
+│   │   └── health.py             # GET /health
+│   └── models/
+│       ├── __init__.py
+│       └── responses.py          # Pydantic response models
+│
+└── frontend/
+    build later
+```
+
+---
+
+## SECTION 2 — Data Layer
+
+### 2a. Prompt: Generate Synthetic Transaction Data
+
+```
+FILE: data/generate_transactions.py
+
+Generate realistic synthetic Indian banking transaction data for Graphene's demo.
+
+REQUIREMENTS:
+
+1. Create a function `generate_transaction_dataset(n_accounts=500, n_transactions=5000, fraud_ratio=0.08)`
+   that returns a pandas DataFrame with these columns:
+   - txn_id: UUID string
+   - timestamp: datetime (IST, spread over last 90 days, weighted toward business hours)
+   - sender_account: string (format: "ACC" + 10-digit number)
+   - receiver_account: string (same format)
+   - amount: float (log-normal distribution, mean=50000, std=200000, min=100, max=50000000)
+   - txn_type: enum ["NEFT", "RTGS", "IMPS", "UPI", "INTERNAL"]
+   - channel: enum ["MOBILE", "NETBANKING", "BRANCH", "ATM", "API"]
+   - status: enum ["SUCCESS", "FAILED", "PENDING"] — 95% SUCCESS
+   - description: string (realistic payment descriptions)
+   - is_fraud: bool (planted based on fraud_patterns.py)
+   - fraud_type: string or None (type of fraud if is_fraud=True)
+
+2. Use the Faker library (locale="en_IN") for realistic Indian names and descriptions.
+
+3. Ensure accounts have realistic profiles:
+   - salary_accounts: low-value regular credits (~20k-80k monthly)
+   - business_accounts: high-value irregular transactions
+   - dormant_accounts: no activity for 60+ days then sudden large transaction
+   - shell_accounts: receive large amounts, immediately pass on (>95% of received value)
+
+4. Save to data/transactions.csv and data/accounts.csv (account metadata)
+
+5. Print a summary: total transactions, fraud count, fraud types breakdown, date range.
+```
+
+### 2b. Prompt: Plant AML Fraud Patterns
+
+```
+FILE: data/fraud_patterns.py
+
+Plant 5 specific AML fraud patterns into the transaction dataset. Each pattern must be
+detectable by graph queries AND ML models. These are the demo's "hero" detections.
+
+IMPLEMENT THESE EXACT PATTERNS:
+
+Pattern 1 — CIRCULAR (Round-tripping):
+  Function: plant_circular_transactions(df, accounts)
+  Logic: A→B→C→D→A where total cycle completes within 72 hours
+  Amount: Each leg slightly different (±5-15%) to evade exact matching
+  Plant: 3-5 such cycles in the dataset
+  Label: fraud_type = "CIRCULAR_ROUND_TRIP"
+
+Pattern 2 — LAYERING (Rapid multi-hop):
+  Function: plant_layering(df, accounts)
+  Logic: One large source amount split across 4-8 intermediate accounts
+         then recombined into a single destination within 48 hours
+  Amount: Source > 10 lakh, each hop slightly reduces (fees simulation)
+  Plant: 2-3 instances
+  Label: fraud_type = "LAYERING"
+
+Pattern 3 — STRUCTURING (Smurfing below threshold):
+  Function: plant_structuring(df, accounts)
+  Logic: Multiple transactions from different accounts to same destination
+         all just under ₹49,999 (below RBI reporting threshold of ₹50,000)
+  Timing: All within 24 hours
+  Count: 8-15 transactions per instance
+  Plant: 4-6 instances
+  Label: fraud_type = "STRUCTURING"
+
+Pattern 4 — DORMANT ACTIVATION:
+  Function: plant_dormant_activation(df, accounts)
+  Logic: Account with zero activity for 75+ days suddenly receives
+         a transaction > 5x their historical average, then immediately
+         sends >80% of it onward
+  Plant: 5-8 such accounts
+  Label: fraud_type = "DORMANT_ACTIVATION"
+
+Pattern 5 — PROFILE MISMATCH:
+  Function: plant_profile_mismatch(df, accounts)
+  Logic: Account declared as "STUDENT" or "RETIRED" category receives
+         regular credits of 5-50 lakh (incompatible with profile)
+  Plant: 3-4 accounts
+  Label: fraud_type = "PROFILE_MISMATCH"
+
+Each function must:
+- Return modified df with is_fraud=True and fraud_type set for affected transactions
+- Print confirmation: "Planted X [PATTERN_NAME] instances"
+- Not disturb unrelated transactions
+```
+
+### 2c. Prompt: Neo4j Schema and Seeder
+
+```
+FILE: data/seed_neo4j.py
+
+Load the generated transaction data into Neo4j with this exact graph schema:
+
+NODE TYPES:
+(:Account {
+  account_id: string,       // primary key
+  account_type: string,     // SAVINGS, CURRENT, SALARY, DORMANT, SHELL
+  customer_name: string,
+  customer_category: string, // INDIVIDUAL, BUSINESS, STUDENT, RETIRED
+  branch_code: string,
+  kyc_status: string,       // VERIFIED, PENDING, EXPIRED
+  account_age_days: int,
+  risk_score: float,        // 0.0 to 1.0, updated by ML
+  is_flagged: bool
+})
+
+(:Transaction {
+  txn_id: string,           // primary key
+  timestamp: datetime,
+  amount: float,
+  txn_type: string,
+  channel: string,
+  status: string,
+  description: string,
+  is_fraud: bool,           // ground truth (hidden in prod, visible in demo)
+  fraud_type: string        // null if not fraud
+})
+
+RELATIONSHIP TYPES:
+(:Account)-[:SENT {amount: float, timestamp: datetime, txn_id: string}]->(:Transaction)
+(:Transaction)-[:RECEIVED_BY {amount: float, timestamp: datetime}]->(:Account)
+
+Also create a direct convenience relationship:
+(:Account)-[:TRANSFERRED_TO {
+  txn_id: string,
+  amount: float,
+  timestamp: datetime,
+  txn_type: string,
+  is_fraud: bool
+}]->(:Account)
+
+CREATE THESE INDEXES:
+- Account.account_id (unique constraint)
+- Transaction.txn_id (unique constraint)
+- Transaction.timestamp (range index for time-window queries)
+- Account.is_flagged (for fast alert queries)
+
+SEEDER FUNCTION:
+def seed_database(csv_path: str, neo4j_uri: str, user: str, password: str):
+  - Clear existing data first (for demo repeatability): MATCH (n) DETACH DELETE n
+  - Load in batches of 500 using UNWIND for performance
+  - Print progress every 1000 transactions
+  - Final print: "Seeded X accounts, Y transactions, Z relationships"
+```
+
+---
+
+## SECTION 3 — Graph Layer (Neo4j Queries)
+
+### 3a. Prompt: Neo4j Client
+
+```
+FILE: graph/neo4j_client.py
+
+Create a production-quality Neo4j client for Graphene.
+
+IMPLEMENT:
+
+class Neo4jClient:
+  - __init__(uri, user, password): initialise driver with connection pool (max 10)
+  - close(): properly close driver
+  - execute_query(query: str, params: dict) -> list[dict]: run read query
+  - execute_write(query: str, params: dict) -> dict: run write query
+  - health_check() -> bool: verify connectivity
+
+Create a module-level singleton using these environment variables:
+  NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD (loaded from .env via python-dotenv)
+
+Add a context manager so it can be used as:
+  with Neo4jClient() as client:
+      results = client.execute_query(...)
+
+Handle Neo4j exceptions gracefully — raise a custom GrapheneDBError with
+a clear message instead of exposing raw driver exceptions.
+```
+
+### 3b. Prompt: AML Pattern Cypher Queries
+
+```
+FILE: graph/pattern_queries.py
+
+Implement these Cypher queries as Python functions. Each must return a list of
+dicts representing flagged accounts/transactions with full context.
+
+This is the CORE of Graphene's graph detection capability.
+
+IMPLEMENT THESE FUNCTIONS:
+
+1. detect_circular_transactions(client, max_hop=5, time_window_hours=72) -> list[dict]
+   Cypher concept: Find cycles using path queries
+   MATCH path = (a:Account)-[:TRANSFERRED_TO*2..{max_hop}]->(a)
+   WHERE ALL(r IN relationships(path) WHERE r.timestamp > datetime() - duration('PT{time_window_hours}H'))
+   Return: account_ids in cycle, transaction_ids, total_amount, cycle_length, timestamps
+
+2. detect_layering(client, min_source_amount=1000000, time_window_hours=48) -> list[dict]
+   Find: one large source → fans to many intermediaries → reconverges
+   Use: MATCH (source)-[:TRANSFERRED_TO]->(mid)-[:TRANSFERRED_TO]->(dest)
+   Filter: source amount > min_source_amount, all within time_window
+   Return: source_account, intermediate_accounts, destination_account, total_amount
+
+3. detect_structuring(client, threshold=49999, time_window_hours=24, min_count=5) -> list[dict]
+   Find: multiple small transactions to same destination, all below threshold
+   Return: destination_account, sender_accounts, transaction_count, total_amount, timestamps
+
+4. detect_dormant_activation(client, dormant_days=60, spike_multiplier=3.0) -> list[dict]
+   Find: accounts with no activity for dormant_days that suddenly receive large amounts
+   Then: check if they immediately send >70% onward
+   Return: account_id, last_activity_before, activation_amount, forwarded_amount, forwarded_to
+
+5. detect_profile_mismatch(client, categories=["STUDENT","RETIRED"], min_amount=500000) -> list[dict]
+   Find: accounts in low-income categories receiving high-value credits
+   Return: account_id, category, transaction_amount, sender_account
+
+6. get_account_subgraph(client, account_id: str, depth: int = 3) -> dict
+   Returns full neighbourhood for visualisation:
+   {
+     nodes: [{id, account_type, risk_score, is_flagged, ...}],
+     edges: [{source, target, amount, timestamp, txn_type, is_fraud}]
+   }
+   Limit to depth hops, max 200 nodes total
+
+7. trace_fund_path(client, source_account: str, dest_account: str) -> list[dict]
+   Find shortest path between two accounts through TRANSFERRED_TO relationships
+   Return all nodes and edges along the path with full transaction details
+
+Each function must:
+- Accept the Neo4jClient as first argument
+- Log the query execution time
+- Return empty list if no results (never raise on empty)
+- Include a docstring explaining the AML typology being detected
+```
+
+---
+
+## SECTION 4 — ML Layer
+
+### 4a. Prompt: Feature Engineering
+
+```
+FILE: ml/feature_engineering.py
+
+Extract numerical features from Neo4j graph data for ML model training and inference.
+These features feed both the GNN and the Isolation Forest.
+
+ACCOUNT-LEVEL FEATURES (per node):
+def extract_account_features(client, account_id: str = None) -> pd.DataFrame
+  Returns DataFrame where each row is an account with these features:
+  - total_sent_30d: total INR sent in last 30 days
+  - total_received_30d: total INR received in last 30 days
+  - txn_count_30d: number of transactions in last 30 days
+  - unique_counterparties_30d: distinct accounts interacted with
+  - avg_txn_amount: mean transaction amount (all time)
+  - std_txn_amount: standard deviation of amounts
+  - max_single_txn: largest single transaction
+  - night_txn_ratio: fraction of transactions between 11pm–5am IST
+  - velocity_7d: transactions in last 7 days / transactions in prior 7 days
+  - sent_received_ratio: total_sent / (total_received + 1)
+  - days_since_last_txn: recency feature
+  - account_age_days: from account metadata
+  - is_dormant_activated: bool — was dormant >60d then received large amount
+
+GRAPH-STRUCTURAL FEATURES (per node):
+def extract_graph_features(client, account_id: str = None) -> pd.DataFrame
+  Returns DataFrame with:
+  - in_degree: number of accounts sending to this account
+  - out_degree: number of accounts this account sends to
+  - betweenness_centrality: approximated via shortest path sampling (100 samples)
+  - clustering_coefficient: fraction of neighbours who transact with each other
+  - pagerank_score: Neo4j GDS PageRank (use Neo4j Graph Data Science library if available,
+                    else compute manually via 20-iteration power iteration)
+  - is_in_cycle: bool — detected in any circular transaction pattern
+  - max_cycle_length: longest cycle this account participates in (0 if none)
+  - hop_count_to_flagged: minimum hops to nearest is_flagged account
+
+COMBINED FEATURES:
+def get_full_feature_matrix(client) -> tuple[pd.DataFrame, list[str]]
+  Merge account and graph features on account_id.
+  Normalise all numeric columns using StandardScaler.
+  Return (feature_df, feature_names_list)
+
+Use Neo4j queries directly — do not rely on networkx for large graphs.
+Cache results to data/features_cache.pkl with a 1-hour TTL for demo performance.
+```
+
+### 4b. Prompt: GNN Model (GraphSAGE)
+
+```
+FILE: ml/gnn_model.py
+
+Implement a GraphSAGE-based Graph Neural Network for account-level fraud classification.
+GraphSAGE is chosen over GCN because it handles inductive learning on unseen nodes —
+essential for detecting new fraud accounts at inference time.
+
+ARCHITECTURE:
+
+class GrapheneGNN(torch.nn.Module):
+  Architecture: 3-layer GraphSAGE
+  Layer 1: SAGEConv(in_channels=input_features, out_channels=128, aggr='mean')
+           + BatchNorm + ReLU + Dropout(0.3)
+  Layer 2: SAGEConv(128, 64, aggr='mean')
+           + BatchNorm + ReLU + Dropout(0.2)
+  Layer 3: SAGEConv(64, 32, aggr='mean')
+           + ReLU
+  Output:  Linear(32, 2) → log_softmax → [P(normal), P(fraud)]
+
+  forward(x, edge_index) -> tensor of shape [num_nodes, 2]
+
+  Also implement:
+  predict_proba(x, edge_index) -> numpy array of fraud probabilities [0,1]
+  get_node_embeddings(x, edge_index) -> numpy array [num_nodes, 32] for visualisation
+
+TRAINING FUNCTION:
+def train_gnn(feature_df: pd.DataFrame, labels: pd.Series,
+              edge_list: list[tuple], epochs=100) -> GrapheneGNN:
+  - Convert DataFrame to PyTorch Geometric Data object
+  - Handle class imbalance: use WeightedRandomSampler (fraud is ~8% of data)
+  - Use Adam optimizer, lr=0.001, weight_decay=5e-4
+  - Train/val split: 80/20, stratified by label
+  - Early stopping: patience=15 epochs based on val AUC-ROC
+  - Print epoch loss and AUC every 10 epochs
+  - Save best model to ml/models/gnn_best.pt
+  - Return trained model
+
+INFERENCE FUNCTION:
+def load_and_predict(feature_df: pd.DataFrame, edge_list: list[tuple]) -> pd.DataFrame:
+  - Load model from ml/models/gnn_best.pt
+  - Return DataFrame with columns: account_id, gnn_fraud_prob, gnn_embedding_2d
+  - gnn_embedding_2d: UMAP reduction of 32-dim embedding to 2D for scatter plot
+
+IMPORTANT:
+- Use torch_geometric.nn.SAGEConv — do not implement manually
+- Handle isolated nodes (no edges) — add self-loops: add_self_loops(edge_index)
+- Reproducibility: set torch.manual_seed(42) and numpy.random.seed(42)
+```
+
+### 4c. Prompt: Isolation Forest Anomaly Detector
+
+```
+FILE: ml/anomaly_detector.py
+
+Implement an ensemble anomaly detector combining Isolation Forest and Local Outlier Factor.
+This is the UNSUPERVISED detector — it finds anomalies without needing fraud labels,
+which is critical for detecting novel fraud types not in training data.
+
+class GrapheneAnomalyDetector:
+
+  __init__(contamination=0.08):
+    self.iso_forest = IsolationForest(
+      n_estimators=300,
+      contamination=contamination,
+      max_samples='auto',
+      random_state=42,
+      n_jobs=-1
+    )
+    self.lof = LocalOutlierFactor(
+      n_neighbors=20,
+      contamination=contamination,
+      novelty=True,    # MUST be True for predict() to work at inference
+      n_jobs=-1
+    )
+    self.scaler = StandardScaler()
+    self.is_fitted = False
+
+  fit(feature_df: pd.DataFrame):
+    - Drop account_id column before fitting
+    - Fit scaler on feature_df
+    - Fit both iso_forest and lof on scaled features
+    - Set self.is_fitted = True
+    - Save model to ml/models/anomaly_detector.pkl using joblib
+    - Print: "Anomaly detector fitted on X samples, Y features"
+
+  predict(feature_df: pd.DataFrame) -> pd.DataFrame:
+    - Returns DataFrame with:
+        account_id: str
+        iso_score: float  (raw Isolation Forest score, lower = more anomalous)
+        lof_score: float  (raw LOF score, lower = more anomalous)
+        iso_is_anomaly: bool
+        lof_is_anomaly: bool
+        ensemble_anomaly_score: float  (0-1, higher = more suspicious)
+            Formula: 0.6 * normalize(iso_score) + 0.4 * normalize(lof_score)
+        ensemble_is_anomaly: bool  (True if ensemble_anomaly_score > 0.65)
+
+  load(path='ml/models/anomaly_detector.pkl'):
+    Classmethod. Load fitted detector from disk.
+
+ALSO IMPLEMENT:
+def explain_anomaly(detector, feature_df, account_id: str) -> dict:
+  Use SHAP TreeExplainer on the Isolation Forest component.
+  Return: {
+    account_id: str,
+    top_features: list of {feature_name, shap_value, direction: "increases"/"decreases" risk},
+    anomaly_score: float,
+    explanation_text: str  // human-readable, e.g. "Flagged due to 47× above-average send velocity"
+  }
+```
+
+### 4d. Prompt: Risk Scorer (Ensemble)
+
+```
+FILE: ml/risk_scorer.py
+
+Combine GNN predictions, Isolation Forest scores, and Cypher pattern matches into
+a single 0-100 risk score per account. This is what the dashboard displays.
+
+RISK SCORE FORMULA:
+  score = (
+    W_GNN   * gnn_fraud_prob        * 100  +   # W_GNN   = 0.40
+    W_ISO   * ensemble_anomaly_score * 100  +   # W_ISO   = 0.35
+    W_RULES * rule_match_score              +   # W_RULES = 0.25
+  )
+  Clamp final score to [0, 100]
+
+  rule_match_score calculation (0-100):
+    CIRCULAR detected:          +40
+    LAYERING detected:          +35
+    STRUCTURING detected:       +30
+    DORMANT_ACTIVATION detected: +25
+    PROFILE_MISMATCH detected:  +20
+    Multiple patterns:          cap at 100
+
+RISK TIERS:
+  0-30:   LOW    (green)  — normal monitoring
+  31-55:  MEDIUM (amber)  — enhanced due diligence
+  56-75:  HIGH   (orange) — immediate review required
+  76-100: CRITICAL (red)  — freeze account, escalate to FIU
+
+class RiskScorer:
+
+  compute_scores(
+    gnn_results: pd.DataFrame,
+    anomaly_results: pd.DataFrame,
+    pattern_results: dict[str, list],  // output from pattern_queries.py
+    account_ids: list[str]
+  ) -> pd.DataFrame:
+
+  Returns DataFrame with:
+    account_id, risk_score, risk_tier, gnn_contribution, iso_contribution,
+    rule_contribution, triggered_patterns, recommendation, timestamp
+
+  generate_alert(account_id, risk_df_row) -> dict:
+    Returns structured alert:
+    {
+      alert_id: uuid,
+      account_id: str,
+      risk_score: float,
+      risk_tier: str,
+      triggered_patterns: list[str],
+      recommendation: str,         // "Freeze account", "Enhanced due diligence", etc.
+      evidence_summary: str,       // 2-3 sentence human-readable explanation
+      created_at: datetime (IST),
+      status: "OPEN"
+    }
+```
+
+### 4e. Prompt: SHAP Explainer
+
+```
+FILE: ml/shap_explainer.py
+
+Generate SHAP explanations for every model prediction. This is NON-NEGOTIABLE for
+banking AI — regulators and investigators need to know WHY an account was flagged.
+
+IMPLEMENT:
+
+class GrapheneSHAPExplainer:
+
+  explain_gnn_prediction(model, feature_tensor, feature_names, account_id) -> dict:
+    - Use shap.DeepExplainer on the GNN's final linear layer
+    - Return top 5 features by absolute SHAP value
+    - Format: {
+        account_id: str,
+        model: "GNN",
+        fraud_probability: float,
+        explanation: [
+          {rank: 1, feature: "velocity_7d", shap_value: 0.23,
+           actual_value: 47.2, direction: "increases_risk",
+           readable: "Transaction velocity is 47× above baseline"},
+          ...
+        ]
+      }
+
+  explain_isolation_forest(detector, feature_df, account_id) -> dict:
+    - Use shap.TreeExplainer on iso_forest
+    - Same return format as above with model: "IsolationForest"
+
+  generate_combined_explanation(gnn_exp, iso_exp, rule_matches) -> str:
+    Generate a 3-5 sentence plain-English explanation combining all signals.
+    Example output:
+    "Account ACC1234567890 is flagged CRITICAL (score: 87/100).
+     The GNN model detected this account sits in a cluster of 6 shell accounts
+     with abnormal fund-forwarding behaviour (GNN fraud probability: 91%).
+     Anomaly detection flagged extremely high transaction velocity — 47× this
+     account's 90-day baseline — occurring at 2:30 AM IST.
+     Two AML patterns were triggered: CIRCULAR round-tripping (3-hop, ₹23.4L
+     cycled over 18 hours) and STRUCTURING (12 transactions just under ₹49,999
+     sent to the same destination within 6 hours).
+     Recommendation: Freeze account immediately and file STR with FIU-IND."
+
+    This explanation must appear word-for-word in the dashboard and PDF report.
+```
+
+---
+
+## SECTION 5 — API Layer
+
+### 5a. Prompt: FastAPI Main App
+
+```
+FILE: api/main.py
+
+Create the Graphene FastAPI application.
+
+SETUP:
+- App title: "Graphene API", version: "1.0.0"
+- CORS: allow all origins (localhost demo — no restrictions needed)
+- Startup event: verify Neo4j connection, load ML models into memory
+- Shutdown event: close Neo4j driver cleanly
+- Mount static files at /static → frontend/ directory
+- Root route GET / → serve frontend/index.html
+
+MIDDLEWARE:
+- Request logging: log method, path, status, duration for every request
+- Error handler: catch all unhandled exceptions → return JSON {error, detail, timestamp}
+
+INCLUDE ROUTERS:
+- api/routes/health.py    → prefix="/api"
+- api/routes/alerts.py    → prefix="/api"
+- api/routes/graph.py     → prefix="/api"
+- api/routes/reports.py   → prefix="/api"
+
+STARTUP SEQUENCE (lifespan):
+1. Connect to Neo4j — fail fast if unavailable
+2. Load GNN model from ml/models/gnn_best.pt
+3. Load AnomalyDetector from ml/models/anomaly_detector.pkl
+4. Run all 5 pattern queries on startup, cache results in memory
+5. Compute risk scores for all accounts, cache in memory
+6. Log: "Graphene API ready — X accounts loaded, Y alerts generated"
+```
+
+### 5b. Prompt: API Routes
+
+```
+FILE: api/routes/alerts.py
+
+ENDPOINTS:
+
+GET /api/alerts
+  Query params: tier (LOW/MEDIUM/HIGH/CRITICAL), limit (default 50), offset (0)
+  Returns: paginated list of alerts sorted by risk_score desc
+  Response: {total, alerts: [...], page_info: {...}}
+
+GET /api/alerts/{alert_id}
+  Returns: full alert with SHAP explanation, pattern details, account metadata
+  404 if not found
+
+PATCH /api/alerts/{alert_id}
+  Body: {status: "INVESTIGATING" | "DISMISSED" | "ESCALATED", analyst_note: str}
+  Updates alert status in Neo4j (write back)
+  Returns: updated alert
+
+GET /api/alerts/stats
+  Returns: {total_alerts, by_tier: {LOW, MEDIUM, HIGH, CRITICAL},
+            top_patterns: [{pattern, count}], total_amount_at_risk: float}
+
+---
+FILE: api/routes/graph.py
+
+ENDPOINTS:
+
+GET /api/graph/{account_id}
+  Query params: depth (1-4, default 2)
+  Returns: Cytoscape.js-ready graph JSON:
+  {
+    nodes: [{data: {id, label, risk_score, risk_tier, account_type,
+                    total_sent, total_received, is_flagged}}],
+    edges: [{data: {id, source, target, amount, txn_type, timestamp,
+                    is_fraud, fraud_type}}]
+  }
+
+POST /api/graph/trace
+  Body: {source_account: str, dest_account: str}
+  Returns: shortest path between accounts as Cytoscape graph JSON
+  Includes: path length, total amount, intermediate accounts
+
+GET /api/graph/patterns
+  Returns: all detected pattern instances grouped by type
+  Each instance includes: involved_accounts, transaction_ids, total_amount
+
+---
+FILE: api/routes/reports.py
+
+ENDPOINTS:
+
+POST /api/reports/generate
+  Body: {alert_id: str, analyst_name: str, analyst_id: str}
+  Generates a PDF Suspicious Transaction Report (STR) formatted for FIU-IND
+  Returns: {report_id, download_url, generated_at}
+
+GET /api/reports/{report_id}/download
+  Streams the PDF file as application/pdf response
+
+The STR PDF must contain:
+  - Graphene header with logo (text-based, no image needed)
+  - Reporting entity: Union Bank of India (for demo)
+  - Subject account details (name, account number, branch)
+  - Risk score and tier with visual indicator
+  - All triggered AML patterns with evidence
+  - Full SHAP explanation in plain English
+  - Transaction table: top 20 suspicious transactions
+  - Graph summary: accounts involved, total amount
+  - Analyst signature block
+  - FIU report number (generated UUID), date, time (IST)
+
+Use reportlab or weasyprint for PDF generation.
+```
+
+---
+
+ignore this section ⚠️{## SECTION 6 — Frontend Dashboard
+
+### 6a. Prompt: Graphene Dashboard UI
+
+```
+FILE: frontend/index.html + frontend/app.jsx + frontend/styles.css
+
+Build the Graphene fraud investigation dashboard. This is the hackathon demo's
+MOST VISIBLE component — it must look exceptional and be fully functional.
+
+DESIGN DIRECTION:
+  Name: "Graphene" — dark, technical, precise, like an electron microscope readout
+  Theme: Dark background (#0A0E1A), accent: electric teal (#00E5CC),
+         danger: coral red (#FF4757), warning: amber (#FFA502)
+  Font: "IBM Plex Mono" for data values, "Inter" for labels (load from Google Fonts)
+  Feel: Bloomberg Terminal meets Palantir — dense, data-rich, professional
+
+LAYOUT (3-panel):
+
+LEFT PANEL (280px fixed):
+  - Graphene logo (text mark) + "Fund Flow Intelligence"
+  - Live stats bar: Total Accounts | Alerts | Amount at Risk
+  - Alert queue: scrollable list of alerts with risk score badge
+    Each item: account_id (truncated), risk tier chip (colour-coded), score
+  - Filter bar: ALL | CRITICAL | HIGH | MEDIUM
+  - Clicking an alert loads it into the centre and right panels
+
+CENTRE PANEL (flex, graph canvas):
+  - Cytoscape.js graph — FULL PANEL HEIGHT
+  - Node colours: RED=CRITICAL, ORANGE=HIGH, AMBER=MEDIUM, GREEN=LOW, GREY=normal
+  - Node size: proportional to total transaction volume
+  - Edge thickness: proportional to transaction amount
+  - Edge colour: RED if is_fraud=True, else translucent white
+  - On node click: highlight its neighbourhood, dim everything else
+  - Controls overlay (bottom left): zoom in/out, fit to screen, reset
+  - Mini legend (bottom right): node colours, edge meanings
+
+RIGHT PANEL (320px fixed):
+  - Account detail card:
+      Account ID, type, category, KYC status
+      Risk score: large number + animated circular progress ring
+      Risk tier badge (colour-coded)
+  - Triggered patterns: each as a pill badge
+  - SHAP explanation: top 5 features as horizontal bar chart
+    (bars fill left=good, right=bad, coloured by direction)
+  - AI explanation text: the 3-5 sentence plain English from shap_explainer.py
+  - Action buttons: "Generate FIU Report" | "Mark Investigating" | "Dismiss"
+  - Transaction history: mini table, last 10 transactions for this account
+
+TOP NAVBAR:
+  - "GRAPHENE" wordmark left
+  - System status indicator (green dot + "LIVE")
+  - Last scan time
+  - "Run Full Scan" button (triggers POST /api/scan → refreshes all data)
+
+TECH STACK FOR FRONTEND:
+  - React 18 via CDN (unpkg)
+  - Cytoscape.js via CDN for graph
+  - Fetch API for all data loading (no Axios needed)
+  - CSS custom properties for theming — no Tailwind, no component library
+  - All in a SINGLE index.html file for portability
+
+BEHAVIOUR:
+  - On load: fetch /api/alerts/stats → populate top bar
+             fetch /api/alerts?tier=CRITICAL&limit=20 → populate alert queue
+             auto-select first alert → load its graph
+  - When alert selected: fetch /api/graph/{account_id}?depth=2
+                         render in Cytoscape → animate nodes fading in
+                         load SHAP explanation → render bars
+  - "Generate FIU Report" → POST /api/reports/generate → open PDF in new tab
+  - Polling: every 30 seconds re-fetch alerts (simulates live monitoring)
+```}
+
+---
+
+## SECTION 7 — Infrastructure & Demo Setup
+
+### 7a. Prompt: Requirements and Launcher
+
+```
+FILE: requirements.txt
+
+Pin these exact versions (Python 3.11 compatible):
+
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+neo4j==5.20.0
+python-dotenv==1.0.1
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.4.2
+torch==2.3.0
+torch-geometric==2.5.3
+shap==0.45.1
+faker==24.11.0
+reportlab==4.2.2
+pydantic==2.7.1
+joblib==1.4.2
+umap-learn==0.5.6
+
+---
+FILE: run_demo.sh
+
+#!/bin/bash
+# Graphene — One-command demo launcher
+
+echo "==================================="
+echo "  GRAPHENE — Fund Flow Intelligence"
+echo "  PSBs Hackathon 2026"
+echo "==================================="
+
+echo "[1/5] Activating virtual environment..."
+source venv/bin/activate
+
+echo "[2/5] Generating synthetic transaction data..."
+python data/generate_transactions.py
+
+echo "[3/5] Seeding Neo4j database..."
+python data/seed_neo4j.py
+
+echo "[4/5] Training ML models (fast mode: 30 epochs)..."
+python ml/train.py --epochs 30 --fast
+
+echo "[5/5] Starting Graphene API server..."
+echo ""
+echo "  Dashboard: http://localhost:8000"
+echo "  API Docs:  http://localhost:8000/docs"
+echo ""
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+---
+FILE: ml/train.py
+
+Implement a CLI-runnable training script:
+
+python ml/train.py --epochs 100          # full training
+python ml/train.py --epochs 30 --fast    # demo mode (use cached features if available)
+
+Steps:
+1. Load features from Neo4j (or cache)
+2. Train GNN model → save to ml/models/gnn_best.pt
+3. Train AnomalyDetector → save to ml/models/anomaly_detector.pkl
+4. Run all pattern queries → save results to ml/models/pattern_cache.json
+5. Compute risk scores for all accounts → save to ml/models/risk_scores.json
+6. Print final summary:
+   "Training complete.
+    GNN AUC-ROC: 0.XXX | Precision: 0.XX | Recall: 0.XX
+    Anomaly Detector: X accounts flagged
+    Patterns detected: X circular, X layering, X structuring, X dormant, X mismatch
+    Total CRITICAL alerts: X | HIGH: X | MEDIUM: X"
+```
+
+---
+
+## SECTION 8 — Demo Script (for Judges)
+
+```
+This section is for me, not the AI editor. Follow this script during your
+hackathon demo presentation.
+
+GRAPHENE DEMO SCRIPT (8 minutes):
+
+[0:00–0:30] OPEN WITH IMPACT
+  "India loses over ₹2,000 crore annually to money laundering through banks.
+   Traditional rule-based systems catch less than 30% of it.
+   Graphene catches it in real time — using graph intelligence."
+
+[0:30–1:30] SHOW THE DASHBOARD
+  - Open http://localhost:8000
+  - Point to: X CRITICAL alerts, ₹Y crore at risk (live numbers)
+  - Click the top CRITICAL alert
+
+[1:30–3:30] GRAPH VISUALISATION (judges' favourite moment)
+  - Show the account graph — point to red nodes and red edges
+  - "Each node is a bank account. Each edge is a money transfer.
+     Watch what Graphene found..."
+  - Highlight a CIRCULAR pattern: "This ₹23 lakh left Account A,
+     went through B, C, D — and came back to A within 18 hours.
+     That is textbook round-tripping."
+  - Click a STRUCTURING node: "These 12 accounts all sent ₹49,800
+     to the same destination in 6 hours. Just under the ₹50,000 RBI
+     reporting threshold. That is not a coincidence."
+
+[3:30–5:00] AI EXPLANATION — WHY DID GRAPHENE FLAG THIS?
+  - Show SHAP bar chart: "Graphene doesn't just flag — it explains.
+     Top reason: transaction velocity 47× above this account's baseline.
+     Second: it sits at the centre of a high-risk account cluster.
+     Third: transactions at 2:30 AM IST — outside any branch hours."
+  - Read the AI explanation text aloud.
+
+[5:00–6:30] GENERATE FIU REPORT
+  - Click "Generate FIU Report"
+  - PDF opens: "This is a Suspicious Transaction Report, formatted exactly
+     to FIU-IND's STR template. One click — ready to file with the
+     Financial Intelligence Unit."
+
+[6:30–7:30] TECHNICAL DEPTH (for technical judges)
+  - "Under the hood: Neo4j graph database with 500 accounts and 5,000
+     transactions. GraphSAGE neural network trained on graph structure —
+     not just transaction amounts. AUC-ROC of 0.94 on held-out test data.
+     SHAP explanations on every single prediction."
+
+[7:30–8:00] CLOSE
+  "Graphene turns a 2-week fraud investigation into a 2-minute alert.
+   Built for India's banks. Ready for production."
+```
+
+---
+
+## SECTION 9 — Code Quality Rules
+
+```
+Enforce these rules on ALL generated code:
+
+STYLE:
+- Type hints on every function signature (Python)
+- Docstrings on every class and public method (Google style)
+- Max line length: 88 characters (black formatter compatible)
+- No magic numbers — all constants in a CONFIG dict at top of file
+
+ERROR HANDLING:
+- Never use bare except: — always except SpecificException as e:
+- Log all exceptions with: logger.exception("Context message")
+- API endpoints return structured errors: {error: str, detail: str, code: int}
+
+LOGGING:
+- Use Python's logging module — not print() in production code
+- Format: "[GRAPHENE] %(levelname)s %(name)s — %(message)s"
+- Level: INFO for normal operations, DEBUG for query results, ERROR for failures
+
+TESTING:
+- Every function in data/ and ml/ must have a corresponding test in tests/
+- Use pytest — test file mirrors source file name: test_gnn_model.py
+- At minimum: one happy path test, one edge case, one error case
+
+PERFORMANCE:
+- All Neo4j queries: add LIMIT clause (max 1000 rows unless explicitly paginated)
+- Feature computation: cache to disk, reload if <1 hour old
+- Model inference: batch all accounts, never call model one account at a time
+- API response time target: <500ms for graph queries, <200ms for alert list
+```
+
+---
+
+## QUICK REFERENCE — Build Order for Hackathon
+
+```
+Build in this exact order to always have a runnable demo:
+
+Day 1 — Core data pipeline:
+  ✅ data/generate_transactions.py   (synthetic data with fraud patterns)
+  ✅ data/fraud_patterns.py           (plant AML patterns)
+  ✅ data/seed_neo4j.py               (load into Neo4j)
+  ✅ graph/neo4j_client.py            (DB connection)
+  ✅ graph/pattern_queries.py         (Cypher AML detection)
+  → CHECKPOINT: You can query Neo4j and see fraud patterns in Cypher shell
+
+Day 2 — ML models:
+  ✅ ml/feature_engineering.py        (extract features)
+  ✅ ml/anomaly_detector.py           (Isolation Forest)
+  ✅ ml/gnn_model.py                  (GraphSAGE)
+  ✅ ml/shap_explainer.py             (explanations)
+  ✅ ml/risk_scorer.py                (ensemble 0-100 score)
+  ✅ ml/train.py                      (full pipeline)
+  → CHECKPOINT: python ml/train.py prints AUC scores and alert counts
+
+Day 3 — API + Dashboard:
+  ✅ api/main.py + routes/            (FastAPI endpoints)
+  ✅ frontend/index.html              (full Graphene dashboard)
+  ✅ run_demo.sh                      (one-command launcher)
+  → CHECKPOINT: Full demo running at http://localhost:8000
+
+Day 4 — Polish:
+  ✅ README.md                        (judges may read this)
+  ✅ Dry-run the demo script 3 times
+  ✅ Test with Neo4j stopped → graceful error message, not crash
+  ✅ Verify PDF report generates correctly
+  ✅ Rehearse 8-minute demo script
+```
+
+---
+
+*Graphene — *
+*"See through every transaction."*
