@@ -1,0 +1,15 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+neo4j==5.20.0
+python-dotenv==1.0.1
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.4.2
+torch==2.3.0
+torch-geometric==2.5.3
+shap==0.45.1
+faker==24.11.0
+reportlab==4.2.2
+pydantic==2.7.1
+joblib==1.4.2
+umap-learn==0.5.6
