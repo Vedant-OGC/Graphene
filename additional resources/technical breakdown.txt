@@ -1,0 +1,23 @@
+The system has 5 distinct layers, each with a specific job. Think of it like an assembly line — raw data enters at the top, and actionable intelligence comes out at the bottom.
+
+Layer 1 — Data Ingestion
+Your system needs to listen to every place money moves in the bank. This means connecting to core banking (Finacle/BaNCS via JDBC or REST), RTGS/NEFT interbank wires (via SFTP file feeds or APIs), UPI/IMPS (via NPCI gateway webhooks), loan disbursals, trade finance, and ATM/POS terminal logs. Each of these speaks a different format — some are flat files, some are XML SOAP messages, some are REST JSON. You need Apache Kafka as the universal "inbox." Every source publishes events to Kafka topics (transactions.rtgs, transactions.upi, etc.), so the rest of the system has one clean place to read from regardless of source.
+
+Layer 2 — Stream Processing
+Raw events are noisy and incomplete. Apache Flink with its CEP (Complex Event Processing) library sits here and does three things: it enriches each transaction with customer KYC data pulled from the CRM, deduplicates events that arrive twice (inevitable in distributed systems), and applies temporal pattern rules — for example, "if 5 or more transactions from the same account occur within 10 minutes, all under ₹49,999, flag as potential structuring." Flink processes millions of events per second with sub-second latency, which is why it's the industry standard for financial streaming.
+
+Layer 3 — Graph Analytics + ML (The Core Brain)
+This is where PS3 becomes genuinely impressive. Every account is a node, and every transaction is an edge in a graph stored in Neo4j — a purpose-built graph database. When money flows A→B→C→A in a circle, Neo4j's Cypher query language can find that pattern in milliseconds, something a traditional relational database would struggle to do.
+On top of the graph, you run two types of ML:
+Graph Neural Networks (GNNs) via PyTorch Geometric learn the neighbourhood context of each node. A normal savings account surrounded by other normal accounts looks very different from a shell account surrounded by dozens of recently-opened accounts. GNNs capture this structural signature automatically.
+Isolation Forest is an unsupervised anomaly detection algorithm that scores each transaction without needing labelled fraud examples. It works by randomly partitioning data — anomalies get isolated in fewer splits because they're "different." This is critical because you rarely have enough labelled fraud cases to train supervised models.
+SHAP (SHapley Additive exPlanations) then explains why the model flagged something — "this was flagged because: transaction amount 4× this customer's average (contributes 42% to score), destination account opened 3 days ago (contributes 31%), midnight timestamp (contributes 18%)." This is non-negotiable for any banking AI system.
+
+Layer 4 — Risk Scoring Engine
+The raw ML scores feed into a weighted ensemble that combines GNN output, Isolation Forest score, and deterministic rule matches (FATF AML typology rules like layering, smurfing, round-tripping) into a single 0–100 risk score. Accounts scoring above 75 generate a HIGH alert, 50–75 a MEDIUM, and below 50 are logged but not alerted. The rule engine here uses Apache Flink's state management to remember account history across sessions.
+
+Layer 5 — Investigator Dashboard + FIU Reporting
+The React.js frontend uses Cytoscape.js to render the graph of suspicious fund flows interactively — investigators can click any node to expand its transaction history, zoom into the circular path, and see the SHAP explanation inline. The FIU evidence package generator (built with WeasyPrint/ReportLab) automatically assembles a structured PDF with the full fund trail, risk scores, typology classification, and supporting transaction records formatted to FIU-IND's STR (Suspicious Transaction Report) template.
+
+Infrastructure Layer (Runs Everything)
+Everything is containerised in Docker and orchestrated by Kubernetes, so each layer scales independently. The graph DB runs on a dedicated high-memory node. Flink runs on a cluster. The ML inference server (TorchServe) runs separately from the API. Redis caches frequently-accessed account profiles to avoid hitting Neo4j for every lookup.
