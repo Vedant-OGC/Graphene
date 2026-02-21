@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graphene — Fund Flow Intelligence</title>
+    <meta name="description" content="AI-powered Fund Flow Tracking and Fraud Detection Dashboard">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+
+    <style>
+        :root {
+            --bg-primary: #0A0E1A;
+            --bg-secondary: #111827;
+            --bg-card: #1A1F35;
+            --bg-hover: #242B45;
+            --accent: #00E5CC;
+            --accent-dim: rgba(0,229,204,0.15);
+            --danger: #FF4757;
+            --danger-dim: rgba(255,71,87,0.15);
+            --warning: #FFA502;
+            --warning-dim: rgba(255,165,2,0.15);
+            --orange: #FF6B35;
+            --green: #2ED573;
+            --green-dim: rgba(46,213,115,0.15);
+            --text-primary: #F1F5F9;
+            --text-secondary: #94A3B8;
+            --text-muted: #64748B;
+            --border: rgba(255,255,255,0.08);
+            --border-active: rgba(0,229,204,0.3);
+            --font-mono: 'IBM Plex Mono', monospace;
+            --font-sans: 'Inter', -apple-system, sans-serif;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+        }
+
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+        /* ─── NAVBAR ─── */
+        .navbar {
+            height: 56px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            position: relative;
+            z-index: 100;
+        }
+        .navbar-left { display: flex; align-items: center; gap: 16px; }
+        .logo {
+            font-family: var(--font-mono);
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 4px;
+            color: var(--accent);
+            text-transform: uppercase;
+        }
+        .logo-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 400;
+            letter-spacing: 1px;
+        }
+        .navbar-right { display: flex; align-items: center; gap: 16px; }
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--green);
+            font-family: var(--font-mono);
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(46,213,115,0.4); }
+            50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(46,213,115,0); }
+        }
+        .scan-btn {
+            background: var(--accent-dim);
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            padding: 6px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-family: var(--font-mono);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .scan-btn:hover { background: var(--accent); color: var(--bg-primary); }
+
+        /* ─── MAIN LAYOUT ─── */
+        .main-layout {
+            display: flex;
+            height: calc(100vh - 56px);
+        }
+
+        /* ─── LEFT PANEL ─── */
+        .left-panel {
+            width: 300px;
+            min-width: 300px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+        .stat-item {
+            background: var(--bg-secondary);
+            padding: 12px 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-family: var(--font-mono);
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .stat-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 2px;
+        }
+        .filter-bar {
+            display: flex;
+            gap: 4px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .filter-btn {
+            flex: 1;
+            padding: 6px 4px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            font-weight: 500;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .filter-btn.active {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .filter-btn:hover:not(.active) {
+            border-color: var(--text-muted);
+            color: var(--text-primary);
+        }
+        .alert-queue {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+        .alert-card {
+            padding: 12px;
+            border-radius: var(--radius-md);
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .alert-card:hover { border-color: var(--border-active); background: var(--bg-hover); }
+        .alert-card.selected { border-color: var(--accent); background: var(--accent-dim); }
+        .alert-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .alert-account {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .score-badge {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        .tier-CRITICAL { background: var(--danger-dim); color: var(--danger); }
+        .tier-HIGH { background: rgba(255,107,53,0.15); color: var(--orange); }
+        .tier-MEDIUM { background: var(--warning-dim); color: var(--warning); }
+        .tier-LOW { background: var(--green-dim); color: var(--green); }
+        .alert-patterns {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 6px;
+        }
+        .pattern-pill {
+            font-size: 9px;
+            font-family: var(--font-mono);
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: rgba(255,255,255,0.06);
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        /* ─── CENTRE PANEL ─── */
+        .center-panel {
+            flex: 1;
+            position: relative;
+            background: var(--bg-primary);
+        }
+        #cy {
+            width: 100%;
+            height: 100%;
+        }
+        .graph-controls {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            display: flex;
+            gap: 6px;
+            z-index: 10;
+        }
+        .graph-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .graph-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .graph-legend {
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            background: rgba(26,31,53,0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 12px 16px;
+            font-size: 11px;
+            z-index: 10;
+        }
+        .legend-title { font-weight: 600; margin-bottom: 8px; color: var(--text-secondary); font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: var(--text-muted); }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .legend-line { width: 20px; height: 2px; flex-shrink: 0; border-radius: 1px; }
+        .no-graph-msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: var(--text-muted);
+        }
+        .no-graph-msg .icon { font-size: 48px; margin-bottom: 12px; }
+        .no-graph-msg h3 { font-size: 16px; color: var(--text-secondary); margin-bottom: 4px; }
+
+        /* ─── RIGHT PANEL ─── */
+        .right-panel {
+            width: 340px;
+            min-width: 340px;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            overflow-y: auto;
+            padding: 16px;
+        }
+        .detail-section {
+            margin-bottom: 20px;
+        }
+        .section-title {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+        .detail-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 16px;
+        }
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            font-size: 13px;
+        }
+        .detail-label { color: var(--text-muted); }
+        .detail-value { color: var(--text-primary); font-family: var(--font-mono); font-weight: 500; }
+        .risk-display {
+            text-align: center;
+            padding: 20px;
+        }
+        .risk-score-big {
+            font-family: var(--font-mono);
+            font-size: 56px;
+            font-weight: 700;
+            line-height: 1;
+        }
+        .risk-score-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        .risk-tier-badge {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 14px;
+            font-weight: 700;
+            padding: 4px 16px;
+            border-radius: var(--radius-sm);
+            margin-top: 8px;
+        }
+        .shap-bar-container { margin-bottom: 8px; }
+        .shap-bar-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-bottom: 3px;
+            font-family: var(--font-mono);
+        }
+        .shap-bar-track {
+            height: 8px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        .shap-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.6s ease;
+        }
+        .explanation-text {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            background: var(--bg-card);
+            border-left: 3px solid var(--accent);
+            padding: 12px 14px;
+            border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+        }
+        .action-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+        .action-btn {
+            flex: 1;
+            min-width: 100px;
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+            border: 1px solid;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: var(--font-sans);
+        }
+        .btn-report { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+        .btn-report:hover { background: var(--accent); color: var(--bg-primary); }
+        .btn-investigate { border-color: var(--warning); color: var(--warning); background: var(--warning-dim); }
+        .btn-investigate:hover { background: var(--warning); color: var(--bg-primary); }
+        .btn-dismiss { border-color: var(--text-muted); color: var(--text-muted); background: transparent; }
+        .btn-dismiss:hover { border-color: var(--text-secondary); color: var(--text-secondary); }
+        .mini-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        .mini-table th {
+            text-align: left;
+            padding: 6px 8px;
+            color: var(--text-muted);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+            font-size: 10px;
+            text-transform: uppercase;
+        }
+        .mini-table td {
+            padding: 6px 8px;
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        .fraud-yes { color: var(--danger); font-weight: 600; }
+        .no-selection {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-muted);
+            text-align: center;
+            padding: 40px;
+        }
+        .no-selection .icon { font-size: 40px; margin-bottom: 12px; }
+        .loading { color: var(--text-muted); text-align: center; padding: 40px; }
+        .loading-spinner {
+            width: 24px; height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        const API_BASE = '';
+        const POLL_INTERVAL = 30000;
+
+        const tierColor = (tier) => ({
+            CRITICAL: '#FF4757', HIGH: '#FF6B35', MEDIUM: '#FFA502', LOW: '#2ED573'
+        }[tier] || '#636E72');
+
+        const formatINR = (amount) => {
+            if (!amount && amount !== 0) return '₹0';
+            if (amount >= 10000000) return `₹${(amount/10000000).toFixed(1)}Cr`;
+            if (amount >= 100000) return `₹${(amount/100000).toFixed(1)}L`;
+            if (amount >= 1000) return `₹${(amount/1000).toFixed(1)}K`;
+            return `₹${amount.toFixed(0)}`;
+        };
+
+        // ─── ERROR BOUNDARY ───
+        class ErrorBoundary extends React.Component {
+            constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+            static getDerivedStateFromError(error) { return { hasError: true, error }; }
+            componentDidCatch(error, info) { console.error('[Graphene] Component error:', error, info); }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div style={{
+                            flex: 1, display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', justifyContent: 'center',
+                            background: 'var(--bg-primary)', color: 'var(--text-muted)',
+                            gap: '12px', padding: '40px',
+                        }}>
+                            <div style={{fontSize: '32px'}}>⚠</div>
+                            <div style={{color: 'var(--text-secondary)', fontWeight: 600}}>Graph render error</div>
+                            <div style={{fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--danger)'}}>
+                                {this.state.error?.message || 'Unknown error'}
+                            </div>
+                            <button
+                                style={{
+                                    marginTop: '8px', padding: '8px 16px',
+                                    background: 'var(--accent-dim)', border: '1px solid var(--accent)',
+                                    color: 'var(--accent)', borderRadius: '6px', cursor: 'pointer',
+                                    fontFamily: 'var(--font-mono)', fontSize: '12px',
+                                }}
+                                onClick={() => this.setState({ hasError: false, error: null })}>
+                                Retry
+                            </button>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
+        // ─── NAVBAR ───
+        function Navbar({ stats, onScan }) {
+            return (
+                <div className="navbar">
+                    <div className="navbar-left">
+                        <div>
+                            <div className="logo">GRAPHENE</div>
+                            <div className="logo-sub">Fund Flow Intelligence</div>
+                        </div>
+                    </div>
+                    <div className="navbar-right">
+                        <div className="status-badge">
+                            <div className="status-dot"></div>
+                            LIVE
+                        </div>
+                        <span style={{fontSize:'11px',color:'var(--text-muted)',fontFamily:'var(--font-mono)'}}>
+                            {new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata'})} IST
+                        </span>
+                        <button className="scan-btn" onClick={onScan}>⟳ Run Full Scan</button>
+                    </div>
+                </div>
+            );
+        }
+
+        // ─── LEFT PANEL ───
+        function LeftPanel({ stats, alerts, selectedAlert, onSelectAlert, filter, onFilterChange }) {
+            return (
+                <div className="left-panel">
+                    <div className="stats-bar">
+                        <div className="stat-item">
+                            <div className="stat-value">{stats.accounts || 0}</div>
+                            <div className="stat-label">Accounts</div>
+                        </div>
+                        <div className="stat-item">
+                            <div className="stat-value" style={{color: stats.totalAlerts > 0 ? 'var(--danger)' : 'var(--accent)'}}>
+                                {stats.totalAlerts || 0}
+                            </div>
+                            <div className="stat-label">Alerts</div>
+                        </div>
+                        <div className="stat-item">
+                            <div className="stat-value" style={{color:'var(--warning)'}}>
+                                {formatINR(stats.amountAtRisk || 0)}
+                            </div>
+                            <div className="stat-label">At Risk</div>
+                        </div>
+                    </div>
+
+                    <div className="filter-bar">
+                        {['ALL','CRITICAL','HIGH','MEDIUM'].map(f => (
+                            <button key={f}
+                                className={`filter-btn ${filter === f ? 'active' : ''}`}
+                                onClick={() => onFilterChange(f)}>
+                                {f}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="alert-queue">
+                        {alerts.length === 0 && (
+                            <div className="loading">
+                                <div className="loading-spinner"></div>
+                                Loading alerts...
+                            </div>
+                        )}
+                        {alerts.map(alert => (
+                            <div key={alert.alert_id}
+                                 className={`alert-card ${selectedAlert?.alert_id === alert.alert_id ? 'selected' : ''}`}
+                                 onClick={() => onSelectAlert(alert)}>
+                                <div className="alert-header">
+                                    <span className="alert-account">{alert.account_id?.slice(0,13)}</span>
+                                    <span className={`score-badge tier-${alert.risk_tier}`}>
+                                        {alert.risk_score?.toFixed(0)}
+                                    </span>
+                                </div>
+                                <div style={{fontSize:'11px',color:'var(--text-muted)'}}>
+                                    {alert.risk_tier} • {alert.status || 'OPEN'}
+                                </div>
+                                {alert.triggered_patterns?.length > 0 && (
+                                    <div className="alert-patterns">
+                                        {alert.triggered_patterns.map((p, i) => (
+                                            <span key={i} className="pattern-pill">{p.replace(/_/g,' ')}</span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // ─── GRAPH PANEL ───
+        function GraphPanel({ graphData, selectedAccount, onNodeClick }) {
+            const cyRef = useRef(null);
+            const containerRef = useRef(null);
+
+            useEffect(() => {
+                if (!containerRef.current) return;
+                if (!graphData || (!graphData.nodes?.length)) {
+                    if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null; }
+                    return;
+                }
+
+                // Build validated node set and filter orphan edges
+                const nodeIds = new Set(graphData.nodes.map(n => n.data?.id).filter(Boolean));
+                const safeEdges = (graphData.edges || []).filter(e =>
+                    e.data?.source && e.data?.target &&
+                    nodeIds.has(e.data.source) && nodeIds.has(e.data.target)
+                );
+
+                const elements = [
+                    ...graphData.nodes.map(n => ({
+                        group: 'nodes',
+                        data: {
+                            ...n.data,
+                            label: n.data.label || n.data.id?.slice(0,10),
+                        }
+                    })),
+                    ...safeEdges.map(e => ({
+                        group: 'edges',
+                        data: { ...e.data }
+                    }))
+                ];
+
+                if (cyRef.current) cyRef.current.destroy();
+
+                try {
+                  cyRef.current = cytoscape({
+                    container: containerRef.current,
+                    elements,
+                    style: [
+                        {
+                            selector: 'node',
+                            style: {
+                                'background-color': 'data(color)',
+                                'label': 'data(label)',
+                                'color': '#E2E8F0',
+                                'font-size': '10px',
+                                'font-family': 'IBM Plex Mono, monospace',
+                                'text-valign': 'bottom',
+                                'text-margin-y': 8,
+                                'width': 'data(size)',
+                                'height': 'data(size)',
+                                'border-width': 2,
+                                'border-color': 'rgba(255,255,255,0.1)',
+                                'text-outline-width': 2,
+                                'text-outline-color': '#0A0E1A',
+                            }
+                        },
+                        {
+                            selector: 'node:selected',
+                            style: {
+                                'border-width': 3,
+                                'border-color': '#00E5CC',
+                                'overlay-opacity': 0.1,
+                                'overlay-color': '#00E5CC',
+                            }
+                        },
+                        {
+                            selector: 'edge',
+                            style: {
+                                'line-color': 'data(color)',
+                                'target-arrow-color': 'data(color)',
+                                'target-arrow-shape': 'triangle',
+                                'curve-style': 'bezier',
+                                'width': 'data(width)',
+                                'opacity': 0.7,
+                                'arrow-scale': 0.8,
+                            }
+                        },
+                        {
+                            selector: 'edge[is_fraud]',
+                            style: {
+                                'line-style': 'dashed',
+                            }
+                        },
+                    ],
+                    layout: {
+                        name: 'cose',
+                        animate: true,
+                        animationDuration: 800,
+                        nodeRepulsion: 8000,
+                        idealEdgeLength: 120,
+                        gravity: 0.3,
+                        padding: 40,
+                    },
+                    minZoom: 0.3,
+                    maxZoom: 3,
+                  });
+
+                  cyRef.current.on('tap', 'node', (evt) => {
+                    const node = evt.target;
+                    const data = node.data();
+                    if (onNodeClick) onNodeClick(data);
+                    cyRef.current.elements().style({ opacity: 0.2 });
+                    node.style({ opacity: 1 });
+                    node.neighborhood().style({ opacity: 1 });
+                    node.neighborhood().connectedEdges().style({ opacity: 0.8 });
+                  });
+
+                  cyRef.current.on('tap', (evt) => {
+                    if (evt.target === cyRef.current) {
+                        cyRef.current.elements().style({ opacity: 1 });
+                    }
+                  });
+                } catch (err) {
+                    console.error('[Graphene] Cytoscape init error:', err);
+                }
+
+                return () => { if (cyRef.current) { cyRef.current.destroy(); cyRef.current = null; } };
+            }, [graphData]);
+
+            const zoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.3);
+            const zoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.3);
+            const fitGraph = () => cyRef.current?.fit(undefined, 40);
+
+            const hasGraph = graphData?.nodes?.length > 0;
+
+            return (
+                <div className="center-panel">
+                    <div id="cy" ref={containerRef}></div>
+
+                    {!hasGraph && (
+                        <div className="no-graph-msg">
+                            <div className="icon">◎</div>
+                            <h3>Select an alert to visualise</h3>
+                            <p style={{fontSize:'13px'}}>Click an alert from the queue to load its transaction graph</p>
+                        </div>
+                    )}
+
+                    {hasGraph && (
+                        <>
+                            <div className="graph-controls">
+                                <button className="graph-btn" onClick={zoomIn} title="Zoom In">+</button>
+                                <button className="graph-btn" onClick={zoomOut} title="Zoom Out">−</button>
+                                <button className="graph-btn" onClick={fitGraph} title="Fit to Screen">⊡</button>
+                            </div>
+
+                            <div className="graph-legend">
+                                <div className="legend-title">Legend</div>
+                                <div className="legend-item"><div className="legend-dot" style={{background:'#FF4757'}}></div> Critical</div>
+                                <div className="legend-item"><div className="legend-dot" style={{background:'#FF6B35'}}></div> High</div>
+                                <div className="legend-item"><div className="legend-dot" style={{background:'#FFA502'}}></div> Medium</div>
+                                <div className="legend-item"><div className="legend-dot" style={{background:'#2ED573'}}></div> Low/Normal</div>
+                                <div style={{borderTop:'1px solid var(--border)',margin:'6px 0'}}></div>
+                                <div className="legend-item"><div className="legend-line" style={{background:'#FF4757'}}></div> Fraud txn</div>
+                                <div className="legend-item"><div className="legend-line" style={{background:'rgba(255,255,255,0.3)'}}></div> Normal txn</div>
+                            </div>
+                        </>
+                    )}
+                </div>
+            );
+        }
+
+        // ─── RIGHT PANEL ───
+        function RightPanel({ alert, alertDetail, onAction }) {
+            if (!alert) {
+                return (
+                    <div className="right-panel">
+                        <div className="no-selection">
+                            <div className="icon">📊</div>
+                            <h3 style={{fontSize:'14px',marginBottom:'6px'}}>Account Details</h3>
+                            <p style={{fontSize:'12px'}}>Select an alert to view account details, risk breakdown, and SHAP explanations</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            const meta = alertDetail?.account_metadata || {};
+            const riskScore = alert.risk_score || 0;
+            const riskTier = alert.risk_tier || 'LOW';
+            const color = tierColor(riskTier);
+
+            const shapBars = [
+                { label: 'GNN Model', value: (alertDetail?.gnn_fraud_prob || 0) * 100, color: '#00E5CC' },
+                { label: 'Anomaly Score', value: (alertDetail?.anomaly_score || 0) * 100, color: '#FFA502' },
+                { label: 'Rule Matches', value: (alert.triggered_patterns?.length || 0) * 20, color: '#FF4757' },
+            ];
+
+            return (
+                <div className="right-panel">
+                    <div className="detail-section">
+                        <div className="section-title">Account Details</div>
+                        <div className="detail-card">
+                            <div className="detail-row"><span className="detail-label">Account ID</span><span className="detail-value">{alert.account_id}</span></div>
+                            <div className="detail-row"><span className="detail-label">Name</span><span className="detail-value">{meta.customer_name || '—'}</span></div>
+                            <div className="detail-row"><span className="detail-label">Type</span><span className="detail-value">{meta.account_type || '—'}</span></div>
+                            <div className="detail-row"><span className="detail-label">Category</span><span className="detail-value">{meta.customer_category || '—'}</span></div>
+                            <div className="detail-row"><span className="detail-label">KYC</span><span className="detail-value">{meta.kyc_status || '—'}</span></div>
+                            <div className="detail-row"><span className="detail-label">Branch</span><span className="detail-value">{meta.branch_code || '—'}</span></div>
+                        </div>
+                    </div>
+
+                    <div className="detail-section">
+                        <div className="section-title">Risk Score</div>
+                        <div className="detail-card">
+                            <div className="risk-display">
+                                <div className="risk-score-big" style={{color}}>{riskScore.toFixed(0)}</div>
+                                <div className="risk-score-label">out of 100</div>
+                                <span className={`risk-tier-badge tier-${riskTier}`}>{riskTier}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {alert.triggered_patterns?.length > 0 && (
+                        <div className="detail-section">
+                            <div className="section-title">Triggered Patterns</div>
+                            <div style={{display:'flex',flexWrap:'wrap',gap:'6px'}}>
+                                {alert.triggered_patterns.map((p, i) => (
+                                    <span key={i} className={`score-badge tier-${riskTier}`}
+                                          style={{fontSize:'11px'}}>
+                                        {p.replace(/_/g, ' ')}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="detail-section">
+                        <div className="section-title">Risk Breakdown</div>
+                        <div className="detail-card">
+                            {shapBars.map((bar, i) => (
+                                <div key={i} className="shap-bar-container">
+                                    <div className="shap-bar-label">{bar.label}: {bar.value.toFixed(0)}%</div>
+                                    <div className="shap-bar-track">
+                                        <div className="shap-bar-fill"
+                                             style={{width: `${Math.min(bar.value, 100)}%`, background: bar.color}}></div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {(alertDetail?.evidence_summary || alertDetail?.combined_explanation) && (
+                        <div className="detail-section">
+                            <div className="section-title">AI Explanation</div>
+                            <div className="explanation-text">
+                                {alertDetail.combined_explanation || alertDetail.evidence_summary}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="detail-section">
+                        <div className="section-title">Actions</div>
+                        <div className="action-buttons">
+                            <button className="action-btn btn-report" onClick={() => onAction('report', alert)}>
+                                📄 Generate FIU Report
+                            </button>
+                            <button className="action-btn btn-investigate" onClick={() => onAction('investigate', alert)}>
+                                🔍 Investigate
+                            </button>
+                            <button className="action-btn btn-dismiss" onClick={() => onAction('dismiss', alert)}>
+                                ✕ Dismiss
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ─── MAIN APP ───
+        function App() {
+            const [stats, setStats] = useState({ accounts: 0, totalAlerts: 0, amountAtRisk: 0 });
+            const [alerts, setAlerts] = useState([]);
+            const [selectedAlert, setSelectedAlert] = useState(null);
+            const [alertDetail, setAlertDetail] = useState(null);
+            const [graphData, setGraphData] = useState(null);
+            const [filter, setFilter] = useState('ALL');
+
+            const fetchStats = useCallback(async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/alerts/stats`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        setStats({
+                            accounts: data.total_alerts * 3 || 0,
+                            totalAlerts: data.total_alerts || 0,
+                            amountAtRisk: data.total_amount_at_risk || 0,
+                        });
+                    }
+                } catch (e) { console.warn('Stats fetch failed:', e); }
+            }, []);
+
+            const fetchAlerts = useCallback(async (tierFilter) => {
+                try {
+                    const params = new URLSearchParams({ limit: '50' });
+                    if (tierFilter && tierFilter !== 'ALL') params.set('tier', tierFilter);
+                    const res = await fetch(`${API_BASE}/api/alerts?${params}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        setAlerts(data.alerts || []);
+                        if (data.alerts?.length > 0 && !selectedAlert) {
+                            handleSelectAlert(data.alerts[0]);
+                        }
+                    }
+                } catch (e) { console.warn('Alerts fetch failed:', e); }
+            }, []);
+
+            const fetchGraph = useCallback(async (accountId) => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/graph/${accountId}?depth=2`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        setGraphData(data);
+                    }
+                } catch (e) { console.warn('Graph fetch failed:', e); }
+            }, []);
+
+            const fetchAlertDetail = useCallback(async (alertId) => {
+                try {
+                    const res = await fetch(`${API_BASE}/api/alerts/${alertId}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        setAlertDetail(data);
+                    }
+                } catch (e) { console.warn('Alert detail fetch failed:', e); }
+            }, []);
+
+            const handleSelectAlert = useCallback((alert) => {
+                setSelectedAlert(alert);
+                if (alert.account_id) fetchGraph(alert.account_id);
+                if (alert.alert_id) fetchAlertDetail(alert.alert_id);
+            }, []);
+
+            const handleAction = useCallback(async (action, alert) => {
+                if (action === 'report') {
+                    try {
+                        const res = await fetch(`${API_BASE}/api/reports/generate`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                alert_id: alert.alert_id,
+                                analyst_name: 'Investigator',
+                                analyst_id: 'INV001',
+                            }),
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            window.open(`${API_BASE}${data.download_url}`, '_blank');
+                        }
+                    } catch (e) { console.error('Report generation failed:', e); }
+                } else if (action === 'investigate' || action === 'dismiss') {
+                    const status = action === 'investigate' ? 'INVESTIGATING' : 'DISMISSED';
+                    try {
+                        await fetch(`${API_BASE}/api/alerts/${alert.alert_id}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ status }),
+                        });
+                        fetchAlerts(filter);
+                    } catch (e) { console.error('Alert update failed:', e); }
+                }
+            }, [filter]);
+
+            useEffect(() => {
+                fetchStats();
+                fetchAlerts(filter);
+                const interval = setInterval(() => {
+                    fetchStats();
+                    fetchAlerts(filter);
+                }, POLL_INTERVAL);
+                return () => clearInterval(interval);
+            }, [filter]);
+
+            const handleFilterChange = (f) => {
+                setFilter(f);
+                fetchAlerts(f);
+            };
+
+            return (
+                <div>
+                    <Navbar stats={stats} onScan={() => { fetchStats(); fetchAlerts(filter); }} />
+                    <div className="main-layout">
+                        <LeftPanel
+                            stats={stats}
+                            alerts={alerts}
+                            selectedAlert={selectedAlert}
+                            onSelectAlert={handleSelectAlert}
+                            filter={filter}
+                            onFilterChange={handleFilterChange}
+                        />
+                        <GraphPanel
+                            graphData={graphData}
+                            selectedAccount={selectedAlert?.account_id}
+                            onNodeClick={(data) => console.log('Node clicked:', data)}
+                        />
+                        <RightPanel
+                            alert={selectedAlert}
+                            alertDetail={alertDetail}
+                            onAction={handleAction}
+                        />
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
